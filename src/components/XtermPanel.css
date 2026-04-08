@@ -1,0 +1,105 @@
+.xterm-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: #0d1117;
+  overflow: hidden;
+  position: relative;
+}
+
+.xterm-container {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.xterm-container .xterm {
+  height: 100% !important;
+  width: 100% !important;
+}
+
+.xterm-container .xterm-viewport {
+  background: #0d1117 !important;
+  overflow-y: auto !important;
+}
+
+.xterm-container .xterm-screen {
+  height: 100% !important;
+}
+
+/* Resume / Reconnect overlay */
+.xterm-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(13, 17, 23, 0.85);
+  z-index: 10;
+}
+
+.xterm-resume-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 32px 48px;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0,0,0,.5);
+}
+
+.xterm-resume-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #e6edf3;
+  font-family: 'Cascadia Code', monospace;
+}
+
+.xterm-resume-session {
+  font-size: 12px;
+  font-family: 'Cascadia Code', monospace;
+  color: #58a6ff;
+  background: #1f6feb22;
+  padding: 2px 8px;
+  border-radius: 3px;
+  border: 1px solid #1f6feb44;
+}
+
+.xterm-resume-desc {
+  font-size: 13px;
+  color: #8b949e;
+  text-align: center;
+}
+
+.xterm-resume-btn {
+  margin-top: 8px;
+  padding: 8px 24px;
+  background: #238636;
+  color: #fff;
+  border: 1px solid #2ea04366;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.xterm-resume-btn:hover {
+  background: #2ea043;
+}
+
+/* Mobile */
+@media (max-width: 768px) {
+  .xterm-container .xterm {
+    font-size: 12px !important;
+  }
+
+  .xterm-resume-card {
+    padding: 24px 32px;
+  }
+}

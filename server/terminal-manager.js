@@ -1,0 +1,357 @@
+import path from "path";
+import fs from "fs";
+import { execSync } from "child_process";
+
+const CHRISTOPHER_HOME = path.join(process.env.USERPROFILE || process.env.HOME, ".claude", "christopher");
+
+// Nesting guard vars to strip
+const CLAUDE_NESTING_VARS = [
+  "CLAUDECODE",
+  "CLAUDE_CODE_ENTRYPOINT",
+  "CLAUDE_CODE_SESSION",
+  "CLAUDE_CODE_PARENT_SESSION",
+];
+
+const MAX_CONCURRENT = 5;
+const CLAUDE_PROJECTS_DIR = path.join(process.env.USERPROFILE || process.env.HOME, ".claude", "projects");
+
+// Find the original working directory of a session by reading the cwd field from the session file
+function findSessionCwd(sessionId) {
+  if (!sessionId || !fs.existsSync(CLAUDE_PROJECTS_DIR)) return null;
+  try {
+    const dirs = fs.readdirSync(CLAUDE_PROJECTS_DIR).filter(d => {
+      try { return fs.statSync(path.join(CLAUDE_PROJECTS_DIR, d)).isDirectory(); } catch { return false; }
+    });
+    for (const dir of dirs) {
+      const jsonlPath = path.join(CLAUDE_PROJECTS_DIR, dir, `${sessionId}.jsonl`);
+      if (fs.existsSync(jsonlPath)) {
+        // Read first few lines to find the cwd field
+        const fd = fs.openSync(jsonlPath, "r");
+        const buf = Buffer.alloc(4096);
+        fs.readSync(fd, buf, 0, 4096, 0);
+        fs.closeSync(fd);
+        const chunk = buf.toString("utf-8");
+        const lines = chunk.split("\n").filter(Boolean);
+        for (const line of lines) {
+          try {
+            const evt = JSON.parse(line);
+            if (evt.cwd && fs.existsSync(evt.cwd)) return evt.cwd;
+          } catch {}
+        }
+        return null;
+      }
+    }
+  } catch {}
+  return null;
+}
+
+// Strip ANSI escape codes from terminal output
+function stripAnsi(str) {
+  return str
+    // Standard CSI sequences: ESC [ ... letter
+    .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "")
+    // OSC sequences: ESC ] ... BEL or ESC ] ... ESC\
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+    // DEC private modes: ESC [ ? digits h/l
+    .replace(/\x1b\[\?[0-9;]*[hl]/g, "")
+    // Any remaining ESC sequences
+    .replace(/\x1b[^[]*?[a-zA-Z]/g, "")
+    // Control chars (keep \n \r)
+    .replace(/[\x00-\x09\x0b\x0c\x0e-\x1f]/g, "")
+    // Carriage returns
+    .replace(/\r/g, "");
+}
+
+function cleanResponseText(raw) {
+  const stripped = stripAnsi(raw);
+  const lines = stripped.split("\n").map(l => l.trim()).filter(Boolean);
+  const cleaned = [];
+  let skip = false;
+
+  for (const line of lines) {
+    // Skip TUI chrome
+    if (line.match(/^[─━═╔╗╚╝║▐▛▜▝▘│┌┐└┘├┤┬┴┼⏵●✻✽✶✢·*]+$/)) continue;
+    if (line.match(/^[─]+$/)) continue;
+    // Skip prompts
+    if (line.match(/^>\s*$/) || line.match(/^>\s.{0,3}$/)) continue;
+    // Skip Claude TUI noise
+    if (line.includes("bypass permissions")) continue;
+    if (line.includes("shift+tab")) continue;
+    if (line.includes("esc to interrupt")) continue;
+    if (line.includes("Press up to edit")) continue;
+    if (line.includes("Bootstrapping")) continue;
+    if (line.includes("Cerebrating") || line.includes("Thinking")) continue;
+    if (line.includes("trust this folder")) continue;
+    if (line.includes("clau.de/desktop")) continue;
+    if (line.match(/^Tip:/)) continue;
+    if (line.match(/^Claude Code v/i)) continue;
+    if (line.match(/^ClaudeCode/)) continue;
+    if (line.match(/^Opus|^Sonnet|^Haiku/)) continue;
+    if (line.match(/^C:\\/) && line.length < 40) continue;
+    if (line.startsWith("[") && line.endsWith("]")) continue;
+    if (line.match(/^\* /)) continue;
+    // Skip spinner characters only
+    if (line.match(/^[✻✽✶✢·●*⎿]+\s*$/)) continue;
+    if (line.match(/^[✻✽✶✢·●*]\s*(Bootstrapping|Thinking|Processing)/)) continue;
+    // Skip tool output blocks
+    if (line.match(/^(Read|Write|Edit|Bash|Grep|Glob|Agent|WebSearch|WebFetch|Skill|TodoWrite)\s/)) { skip = true; continue; }
+    if (skip && (line.startsWith("  ") || line.startsWith("\t"))) continue;
+    skip = false;
+    // Skip very short garbage
+    if (line.length < 2) continue;
+
+    cleaned.push(line);
+  }
+
+  return cleaned.join(" ").replace(/\s+/g, " ").trim();
+}
+
+export class TerminalManager {
+  constructor(appRoot, db) {
+    this.appRoot = appRoot;
+    this.db = db;
+    this.terminals = new Map(); // conversationId -> { pty, mode, pid }
+    this.assignedSessionIds = new Set(); // session IDs already claimed by a conversation
+    this.mcpConfigPath = path.join(CHRISTOPHER_HOME, "config", "mcp-config.json");
+    if (!fs.existsSync(this.mcpConfigPath)) {
+      this.mcpConfigPath = path.join(CHRISTOPHER_HOME, "config", "mcp-config.json");
+    }
+  }
+
+  _buildEnv() {
+    const env = { ...process.env };
+    for (const key of CLAUDE_NESTING_VARS) delete env[key];
+    env.CHRISTOPHER_APP_ROOT = this.appRoot;
+    return env;
+  }
+
+  _buildClaudeArgs(config, mode) {
+    const args = [];
+    if (config?.skipPermissions !== false) args.push("--dangerously-skip-permissions");
+    if (config?.model) args.push("--model", config.model);
+    if (config?.maxTurns) args.push("--max-turns", String(config.maxTurns));
+    if (config?.sessionId) args.push("--resume", config.sessionId);
+    args.push("--add-dir", this.appRoot);
+    if (config?.addDirs) {
+      for (const dir of config.addDirs) {
+        args.push("--add-dir", dir);
+      }
+    }
+    if (fs.existsSync(this.mcpConfigPath)) {
+      args.push("--mcp-config", this.mcpConfigPath);
+    }
+    return args;
+  }
+
+  async createTerminal(conversationId, { mode, config, cols, rows, onOutput, onExit, onResponse, onMessage }) {
+    if (this.terminals.has(conversationId)) {
+      throw new Error("Terminal already exists for this conversation");
+    }
+
+    // Lazy-load node-pty (native module)
+    const pty = await import("node-pty");
+
+    const env = this._buildEnv();
+    // When resuming a session, use the original working directory where the session was created
+    let cwd = config?.workingDirectory || process.env.USERPROFILE || "C:/Users/Shubham(Code)";
+    if (config?.sessionId) {
+      const sessionCwd = findSessionCwd(config.sessionId);
+      if (sessionCwd) {
+        cwd = sessionCwd;
+        console.log(`[Terminal] Resolved session ${config.sessionId.slice(0, 8)} cwd: ${cwd}`);
+      }
+    }
+
+    // Find Git Bash
+    const bashPaths = [
+      "C:/Program Files/Git/bin/bash.exe",
+      "C:/Program Files (x86)/Git/bin/bash.exe",
+    ];
+    const shell = bashPaths.find(p => fs.existsSync(p)) || "bash.exe";
+
+    // Build the claude command to run inside bash
+    const claudeArgs = this._buildClaudeArgs(config, mode);
+    // Shell-quote each arg to handle paths with spaces/parens
+    const quotedArgs = claudeArgs.map(a => `'${a.replace(/'/g, "'\\''")}'`);
+    let claudeCmd;
+
+    if (mode === "terminal-oneshot" && config?.initialMessage) {
+      const escapedMsg = config.initialMessage.replace(/'/g, "'\\''");
+      claudeCmd = `claude -p '${escapedMsg}' --print ${quotedArgs.join(" ")}; echo ""; echo "[Process exited. Press any key to close.]"; read -n 1`;
+    } else {
+      claudeCmd = `claude ${quotedArgs.join(" ")}`;
+    }
+
+    const ptyProcess = pty.default.spawn(shell, ["-l", "-c", claudeCmd], {
+      name: "xterm-256color",
+      cols: cols || 120,
+      rows: rows || 30,
+      cwd,
+      env,
+    });
+
+    const terminal = {
+      pty: ptyProcess,
+      mode,
+      pid: ptyProcess.pid,
+      config,
+      outputBuffer: "",
+      responseBuffer: "",
+      userInputBuffer: "",
+      waitingForResponse: false,
+      promptTimer: null,
+    };
+
+    // Stream output + detect responses for TTS + save messages
+    ptyProcess.onData((data) => {
+      terminal.outputBuffer += data;
+      if (onOutput) onOutput(data);
+
+      // Collect response text when waiting (user pressed Enter)
+      if (terminal.waitingForResponse) {
+        const stripped = stripAnsi(data);
+        terminal.responseBuffer += stripped;
+
+        // When output stops for 2s after user input, response is complete
+        clearTimeout(terminal.promptTimer);
+        terminal.promptTimer = setTimeout(() => {
+          const text = cleanResponseText(terminal.responseBuffer);
+          if (text && text.length > 10) {
+            if (onResponse) onResponse(text);
+            // Save assistant message to local file
+            if (onMessage) onMessage("assistant", text);
+          }
+          terminal.responseBuffer = "";
+          terminal.waitingForResponse = false;
+        }, 2000);
+      }
+    });
+
+    // Handle exit
+    ptyProcess.onExit(({ exitCode, signal }) => {
+      console.log(`[Terminal] ${conversationId.slice(0, 8)} exited (code=${exitCode}, signal=${signal})`);
+      this.terminals.delete(conversationId);
+      if (onExit) onExit(exitCode);
+    });
+
+    terminal.onMessage = onMessage;
+    terminal.spawnedAt = Date.now();
+    terminal.cwd = cwd;
+    this.terminals.set(conversationId, terminal);
+    console.log(`[Terminal] Created ${mode} terminal for ${conversationId.slice(0, 8)} (PID ${ptyProcess.pid})`);
+
+    return { pid: ptyProcess.pid };
+  }
+
+  writeToTerminal(conversationId, data) {
+    const terminal = this.terminals.get(conversationId);
+    if (terminal?.pty) {
+      terminal.pty.write(data);
+
+      // Track user input character by character
+      if (data.includes("\r") || data.includes("\n")) {
+        // User pressed Enter — save the input as a user message
+        const userInput = terminal.userInputBuffer.trim();
+        if (userInput && userInput.length > 0 && terminal.onMessage) {
+          terminal.onMessage("user", userInput);
+        }
+        terminal.userInputBuffer = "";
+        terminal.waitingForResponse = true;
+        terminal.responseBuffer = "";
+        clearTimeout(terminal.promptTimer);
+      } else if (data === "\x7f" || data === "\b") {
+        // Backspace
+        terminal.userInputBuffer = terminal.userInputBuffer.slice(0, -1);
+      } else if (data.length === 1 && data.charCodeAt(0) >= 32) {
+        // Printable character
+        terminal.userInputBuffer += data;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  resizeTerminal(conversationId, cols, rows) {
+    const terminal = this.terminals.get(conversationId);
+    if (terminal?.pty) {
+      terminal.pty.resize(cols, rows);
+      return true;
+    }
+    return false;
+  }
+
+  destroyTerminal(conversationId) {
+    const terminal = this.terminals.get(conversationId);
+    if (terminal?.pty) {
+      try {
+        const pid = terminal.pty.pid;
+        if (pid) {
+          execSync(`taskkill /F /PID ${pid} /T`, { stdio: "ignore", timeout: 5000 });
+        }
+      } catch {
+        try { terminal.pty.kill(); } catch {}
+      }
+      this.terminals.delete(conversationId);
+      console.log(`[Terminal] Destroyed terminal for ${conversationId.slice(0, 8)}`);
+      return true;
+    }
+    return false;
+  }
+
+  getTerminal(conversationId) {
+    return this.terminals.get(conversationId) || null;
+  }
+
+  getActiveCount() {
+    return this.terminals.size;
+  }
+
+  getActiveTerminals() {
+    return Array.from(this.terminals.keys());
+  }
+
+  // Detect the Claude CLI session ID by finding the newest .jsonl across all project dirs
+  // Excludes session IDs already assigned to other conversations
+  detectSessionId(conversationId) {
+    const terminal = this.terminals.get(conversationId);
+    if (!terminal) return null;
+
+    const projectsDir = path.join(process.env.USERPROFILE || process.env.HOME, ".claude", "projects");
+    if (!fs.existsSync(projectsDir)) return null;
+
+    // Collect all candidates sorted by time (newest first)
+    const candidates = [];
+
+    try {
+      const projects = fs.readdirSync(projectsDir);
+      for (const proj of projects) {
+        const projDir = path.join(projectsDir, proj);
+        try { if (!fs.statSync(projDir).isDirectory()) continue; } catch { continue; }
+        const files = fs.readdirSync(projDir).filter(f => f.endsWith(".jsonl") && /^[a-f0-9-]{36}\.jsonl$/.test(f));
+        for (const f of files) {
+          try {
+            const mtime = fs.statSync(path.join(projDir, f)).mtimeMs;
+            if (mtime > terminal.spawnedAt - 2000) {
+              candidates.push({ id: f.replace(".jsonl", ""), mtime });
+            }
+          } catch {}
+        }
+      }
+    } catch {}
+
+    if (candidates.length === 0) {
+      console.log(`[Terminal] No session files found after spawn for ${conversationId.slice(0, 8)}`);
+    }
+
+    // Sort newest first, pick the first one not already assigned
+    candidates.sort((a, b) => b.mtime - a.mtime);
+    for (const c of candidates) {
+      if (!this.assignedSessionIds.has(c.id)) {
+        this.assignedSessionIds.add(c.id);
+        return c.id;
+      }
+    }
+
+    return null;
+  }
+}

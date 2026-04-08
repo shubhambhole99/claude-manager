@@ -1,0 +1,139 @@
+.activity-panel {
+  position: fixed;
+  bottom: 0;
+  left: 280px;
+  right: 0;
+  z-index: 50;
+  background: #0a0a0a;
+  border-top: 1px solid var(--border);
+  transition: height 0.2s ease;
+}
+
+.activity-panel.collapsed {
+  height: 36px;
+}
+
+.activity-panel.open {
+  height: 200px;
+}
+
+.activity-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 16px;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  font-family: 'Fira Code', 'Consolas', monospace;
+  text-align: left;
+}
+
+.activity-toggle:hover {
+  background: var(--bg-hover);
+}
+
+.activity-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.activity-indicator.idle {
+  background: var(--text-muted);
+}
+
+.activity-indicator.working {
+  background: var(--warning);
+  animation: pulse-activity 1.5s infinite;
+}
+
+.activity-indicator.done {
+  background: var(--success);
+  box-shadow: 0 0 6px rgba(0, 184, 148, 0.5);
+}
+
+.activity-indicator.error {
+  background: var(--danger);
+}
+
+@keyframes pulse-activity {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.activity-label {
+  flex: 1;
+  font-weight: 500;
+}
+
+.activity-arrow {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.activity-log {
+  height: calc(100% - 36px);
+  overflow-y: auto;
+  padding: 4px 0;
+  font-family: 'Fira Code', 'Consolas', monospace;
+  font-size: 12px;
+}
+
+.activity-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.activity-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 2px 16px;
+  line-height: 1.6;
+}
+
+.activity-entry:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.activity-time {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  min-width: 75px;
+}
+
+.activity-icon {
+  flex-shrink: 0;
+  width: 14px;
+  text-align: center;
+}
+
+.activity-icon.start { color: var(--accent-light); }
+.activity-icon.tool { color: var(--warning); }
+.activity-icon.status { color: var(--text-secondary); }
+.activity-icon.done { color: var(--success); }
+.activity-icon.error { color: var(--danger); }
+
+.activity-text {
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.activity-entry.tool .activity-text {
+  color: var(--warning);
+}
+
+.activity-entry.done .activity-text {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.activity-entry.error .activity-text {
+  color: var(--danger);
+}
