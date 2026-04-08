@@ -29,11 +29,20 @@ export default function MemoryModule({ onClose }) {
 
   const fetchLocalFiles = useCallback(async () => {
     try {
-      const res = await fetch("/api/memory/list?agent=coding");
-      const data = await res.json();
-      setLocalFiles(Array.isArray(data) ? data : []);
+      // Fetch files from all agents
+      let agents = agentsList;
+      if (agents.length === 0) {
+        try { const r = await fetch("/api/agents"); agents = await r.json(); } catch {}
+      }
+      const allFiles = [];
+      for (const a of agents) {
+        const res = await fetch(`/api/memory/list?agent=${a.name}`);
+        const data = await res.json();
+        if (Array.isArray(data)) allFiles.push(...data);
+      }
+      setLocalFiles(allFiles);
     } catch {}
-  }, []);
+  }, [agentsList]);
 
   const fetchDaily = useCallback(async () => {
     // Fetch daily notes only if date is selected
@@ -48,8 +57,15 @@ export default function MemoryModule({ onClose }) {
     }
     // Fetch memories from all agents — filter by date if selected
     try {
+      // Get agents dynamically if agentsList hasn't loaded yet
+      let agents = agentsList;
+      if (agents.length === 0) {
+        try {
+          const r = await fetch("/api/agents");
+          agents = await r.json();
+        } catch {}
+      }
       const allMems = [];
-      const agents = agentsList.length > 0 ? agentsList : [{ name: "coding" }];
       for (const a of agents) {
         const dateParam = dailyDate ? `&date=${dailyDate}` : "";
         const res = await fetch(`/api/memory/list?agent=${a.name}${dateParam}`);
@@ -78,7 +94,7 @@ export default function MemoryModule({ onClose }) {
     setSelectedContent(null);
     if (entity.file_path) {
       try {
-        const agent = entity.entity_id?.startsWith("personal") ? "personal" : "coding";
+        const agent = entity.agent || entity.entity_id?.split("/")[0] || "default";
         const res = await fetch(`/api/memory/file?agent=${agent}&path=${encodeURIComponent(entity.file_path)}`);
         const data = await res.json();
         setSelectedContent(data?.content || entity.summary || "No content available");
