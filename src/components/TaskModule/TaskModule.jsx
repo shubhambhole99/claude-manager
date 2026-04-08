@@ -20,7 +20,8 @@ export default function TaskModule({ socket, onClose }) {
 
   const isCrm = taskSource === "crm";
   const apiBase = isCrm ? "/api/crm" : "/api";
-  const crmHeaders = isCrm ? { "x-crm-url": localStorage.getItem("crm_url") || "", "x-crm-token": localStorage.getItem("crm_token") || "" } : {};
+  const crmUser = isCrm ? (() => { try { return JSON.parse(localStorage.getItem("crm_user") || "{}"); } catch { return {}; } })() : {};
+  const crmHeaders = isCrm ? { "x-crm-url": localStorage.getItem("crm_url") || "", "x-crm-token": localStorage.getItem("crm_token") || "", "x-crm-user-id": crmUser.id || "" } : {};
 
   const apiFetch = useCallback((path, options = {}) => {
     return fetch(`${apiBase}${path}`, { ...options, headers: { "Content-Type": "application/json", ...crmHeaders, ...(options.headers || {}) } });

@@ -111,16 +111,23 @@ export function createCrmProxyRouter() {
 
   // --- Tasks CRUD ---
 
-  // List tasks
+  // List tasks — filtered to logged-in user's tasks only
   router.get("/tasks", async (req, res) => {
     try {
+      const userId = req.headers["x-crm-user-id"];
       const params = new URLSearchParams();
       if (req.query.status) params.set("status", req.query.status);
       if (req.query.priority) params.set("priority", req.query.priority);
       if (req.query.search) params.set("search", req.query.search);
       const qs = params.toString();
       const data = await crmFetch(req, `/org/tasks${qs ? `?${qs}` : ""}`);
-      const tasks = Array.isArray(data) ? data : (data.tasks || data.data || []);
+      let tasks = Array.isArray(data) ? data : (data.tasks || data.data || []);
+      // Filter to only show tasks relevant to this user
+      if (userId) {
+        tasks = tasks.filter(t =>
+          t.assignedTo === userId || t.createdBy === userId || t.assignedBy === userId
+        );
+      }
       res.json(tasks.map(normalizeTask));
     } catch (err) {
       res.status(err.status || 500).json({ error: err.message });
@@ -287,8 +294,12 @@ export function createCrmProxyRouter() {
 
   router.get("/tasks/analytics/summary", async (req, res) => {
     try {
+      const userId = req.headers["x-crm-user-id"];
       const data = await crmFetch(req, "/org/tasks");
-      const tasks = Array.isArray(data) ? data : (data.tasks || data.data || []);
+      let tasks = Array.isArray(data) ? data : (data.tasks || data.data || []);
+      if (userId) {
+        tasks = tasks.filter(t => t.assignedTo === userId || t.createdBy === userId || t.assignedBy === userId);
+      }
       const now = new Date();
       const weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
 
