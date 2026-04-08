@@ -53,7 +53,7 @@ export default function App() {
   const [viewMessagesId, setViewMessagesId] = useState(null); // convo ID to force message view
   const [playwrightMode, setPlaywrightMode] = useState("extension");
   const [currentModel, setCurrentModel] = useState("claude-opus-4-6");
-  const [agentMode, setAgentMode] = useState("coding");
+  const [agentMode, setAgentMode] = useState("");
   const [appName, setAppName] = useState("AI Assistant");
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [volume, setVolume] = useState(1);
@@ -335,7 +335,7 @@ export default function App() {
 
   useEffect(() => {
     fetch("/api/settings/playwright").then(r => r.json()).then(d => setPlaywrightMode(d.mode)).catch(() => {});
-    fetch("/api/mode").then(r => r.json()).then(d => setAgentMode(d.mode || "coding")).catch(() => {});
+    fetch("/api/mode").then(r => r.json()).then(d => setAgentMode(d.mode || "")).catch(() => {});
     fetch("/api/settings/layout").then(r => r.json()).then(d => {
       if (d.maxPanes) setMaxPanes(d.maxPanes);
       if (d.multiView) { setMultiView(true); if (d.paneConvos?.length) setMultiViewConvos(d.paneConvos); }

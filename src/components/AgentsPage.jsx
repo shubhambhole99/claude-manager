@@ -41,7 +41,7 @@ export default function AgentsPage({ onClose }) {
     } catch {}
   };
 
-  const isBuiltIn = (name) => name === "coding" || name === "personal";
+  const isBuiltIn = () => false; // no built-in agents
 
   return (
     <div className="agents-page">

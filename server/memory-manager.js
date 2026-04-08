@@ -16,15 +16,29 @@ export class MemoryManager {
 
   // --- Mode Management ---
 
+  // Get list of all agents (directories in agents folder)
+  getAgents() {
+    try {
+      if (!fs.existsSync(AGENTS_DIR)) return [];
+      return fs.readdirSync(AGENTS_DIR).filter(d => {
+        try { return fs.statSync(path.join(AGENTS_DIR, d)).isDirectory(); } catch { return false; }
+      });
+    } catch { return []; }
+  }
+
   getMode() {
     try {
-      if (fs.existsSync(MODE_FILE)) return fs.readFileSync(MODE_FILE, "utf-8").trim() || "coding";
+      if (fs.existsSync(MODE_FILE)) {
+        const mode = fs.readFileSync(MODE_FILE, "utf-8").trim();
+        if (mode) return mode;
+      }
     } catch {}
-    return "coding";
+    // Default to first available agent, or "default"
+    const agents = this.getAgents();
+    return agents.length > 0 ? agents[0] : "default";
   }
 
   setMode(mode) {
-    if (!["coding", "personal", "computer"].includes(mode)) throw new Error("Invalid mode: " + mode);
     fs.writeFileSync(MODE_FILE, mode);
     return mode;
   }
@@ -187,7 +201,7 @@ export class MemoryManager {
 
   getMessages(conversationId, agent) {
     // Try current agent first, then the other
-    const agents = agent ? [agent] : [this.getMode(), this.getMode() === "coding" ? "personal" : "coding"];
+    const agents = agent ? [agent] : [this.getMode(), ...this.getAgents().filter(a => a !== this.getMode())];
     for (const a of agents) {
       const filePath = path.join(AGENTS_DIR, a, "messages", `${conversationId}.jsonl`);
       if (fs.existsSync(filePath)) {
@@ -199,7 +213,7 @@ export class MemoryManager {
   }
 
   getMessagesPaginated(conversationId, { limit = 50, offset = 0, maxContentLen = 0 } = {}, agent) {
-    const agents = agent ? [agent] : [this.getMode(), this.getMode() === "coding" ? "personal" : "coding"];
+    const agents = agent ? [agent] : [this.getMode(), ...this.getAgents().filter(a => a !== this.getMode())];
     for (const a of agents) {
       const filePath = path.join(AGENTS_DIR, a, "messages", `${conversationId}.jsonl`);
       if (!fs.existsSync(filePath)) continue;
@@ -257,7 +271,7 @@ export class MemoryManager {
 
   deleteMessages(conversationId) {
     // Delete from both agents
-    for (const agent of ["coding", "personal"]) {
+    for (const agent of this.getAgents()) {
       const filePath = path.join(AGENTS_DIR, agent, "messages", `${conversationId}.jsonl`);
       try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch {}
     }
@@ -358,7 +372,7 @@ export class MemoryManager {
 
   async syncFromFiles() {
     let synced = 0;
-    for (const agent of ["coding", "personal"]) {
+    for (const agent of this.getAgents()) {
       const memDir = this.getMemoryDir(agent);
       if (!fs.existsSync(memDir)) continue;
 

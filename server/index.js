@@ -1019,7 +1019,7 @@ app.post("/api/agents", (req, res) => {
 app.delete("/api/agents/:name", (req, res) => {
   try {
     const { name } = req.params;
-    if (name === "coding" || name === "personal") return res.status(400).json({ error: "Cannot delete built-in agents" });
+    // No built-in agents — all agents are deletable
     const agentDir = path.join(process.env.USERPROFILE || process.env.HOME, ".claude", "agents", name);
     if (!fs.existsSync(agentDir)) return res.status(404).json({ error: "Agent not found" });
     fs.rmSync(agentDir, { recursive: true, force: true });
@@ -1206,7 +1206,7 @@ app.get("/api/memory/file", (req, res) => {
   try {
     const { agent, path: filePath } = req.query;
     if (!filePath) return res.status(400).json({ error: "path required" });
-    const agentName = agent || "coding";
+    const agentName = agent || memoryManager.getMode();
     const fullPath = path.join(process.env.USERPROFILE || process.env.HOME, ".claude", "agents", agentName, "memory", filePath);
     if (!fs.existsSync(fullPath)) return res.status(404).json({ error: "File not found" });
     const content = fs.readFileSync(fullPath, "utf-8");
@@ -1687,7 +1687,7 @@ io.on("connection", (socket) => {
 
       // Agent-lock: only allow writing to conversations matching current mode
       const currentMode = memoryManager.getMode();
-      const convoAgent = convo.agent || "coding";
+      const convoAgent = convo.agent || currentMode;
       const convoMeta = typeof convo.metadata === "string" ? JSON.parse(convo.metadata || "{}") : (convo.metadata || {});
       if (!convoMeta.master && convoAgent !== currentMode) {
         socket.emit("chat:error", { error: `Cannot write to ${convoAgent} conversation while in ${currentMode} mode. Switch agent mode first.`, conversationId: convo.id });
